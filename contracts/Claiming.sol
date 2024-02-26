@@ -2,13 +2,14 @@
 
 pragma solidity >=0.8.2 <0.9.0;
 
-library ClamingLibrary {}
-
 interface IClaiming {
-    function createOrderWithAmount(address[] memory users, uint256 amount)
-        external payable returns (bytes32 orderId);
+    function createOrder() external returns (bytes32 orderId, uint256 blockNumber);
 
-    function claim(bytes32 orderId) external returns (bool result) ;
+    function claim(
+        bytes32 OrderId,
+        address[] memory users,
+        uint256 blockNumber
+    ) external payable returns (bool result);
 }
 
 contract Claiming is IClaiming {
@@ -16,20 +17,8 @@ contract Claiming is IClaiming {
     uint256 public feePrice;
     uint256 public feeAmount;
 
-    // cutomers => orderId
-    mapping(address => bytes32) customers;
-
-    // orderId => (user => amount)
-    mapping(bytes32 => mapping(address => uint256)) orders;
-
-    event OrderCreated(
-        bytes32 indexed orderId,
-        address indexed customer,
-        address[] users,
-        uint256 amount
-    );
-
-    error NotEnoughValue(uint256 excepted, uint256 actual);
+    event OrderCreated(bytes32 indexed orderId, uint256 blockNumber);
+    event ClaimSuccess(uint256 claimValue, uint256 feePrice, uint256 NumberOfUsers, uint256 ValuePerUser);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "you are not owner");
@@ -41,52 +30,31 @@ contract Claiming is IClaiming {
         feePrice = _fee;
     }
 
-    function createOrderWithAmount(address[] memory users, uint256 amount)
-        external
-        payable
-        override 
-        returns (bytes32 orderId)
-    {
-        uint256 allAmount = users.length * amount;
-        require(msg.value >= allAmount + feePrice, "not Enough fee");
-
-        feeAmount += msg.value - allAmount;
-
-        if (msg.value >= allAmount) {
-            orderId = keccak256(abi.encodePacked(msg.sender, users, amount));
-            for (uint8 count = 0; count < users.length; count++) {
-                orders[orderId][users[count]] = amount;
-            }
-
-            emit OrderCreated(orderId, msg.sender, users, amount);
-        } else {
-            revert NotEnoughValue(allAmount, msg.value);
-        }
+    function createOrder() external override returns (bytes32 orderId, uint256 blockNumber) {
+        orderId = keccak256(abi.encodePacked(msg.sender, block.number));
+        uint256 blockNumber = block.number;
+        emit OrderCreated(orderId, blockNumber);
     }
 
-    function createOrderWithoutAmount(address[] memory users)
-        public
-        payable
-        returns (bytes32 orderId)
-    {
-        uint256 amount = msg.value / users.length;
+    function claim(
+        bytes32 OrderId,
+        address[] memory users,
+        uint256 blockNumber
+    ) external payable override returns (bool result) {
+        require(
+            (keccak256(abi.encodePacked(msg.sender, blockNumber))) == OrderId,
+            "Order does not exist"
+        );
 
-        orderId = keccak256(abi.encodePacked(msg.sender, users, amount));
+        uint256 amountToCall = (msg.value / users.length) - feePrice;
+        uint256 feeForClaim = msg.value - (amountToCall * users.length);
 
         for (uint8 count = 0; count < users.length; count++) {
-            orders[orderId][users[count]] = amount;
+            (bool sent, ) = users[count].call{value: amountToCall}("");
+            require(sent, "Failed to send tokens");
         }
-
-        emit OrderCreated(orderId, msg.sender, users, amount);
-    }
-
-    function claim(bytes32 orderId) external override returns (bool result) {
-        require(orders[orderId][msg.sender] != 0, "already claimed");
-
-        orders[orderId][msg.sender] = 0;
-
-        payable(msg.sender).transfer(orders[orderId][msg.sender]);
-
+        emit ClaimSuccess(msg.value, feeForClaim, users.length, amountToCall);
+        feeAmount += feeAmount + feeForClaim;
         return true;
     }
 
@@ -95,16 +63,22 @@ contract Claiming is IClaiming {
     }
 
     function withdraw() public onlyOwner {
-        payable(msg.sender).transfer(feeAmount);
+        (bool sent, ) = payable(msg.sender).call{value: feeAmount}("");
+        require(sent, "Failed to send tokens");
+        feeAmount = 0;
     }
 }
 
 contract ClaimingCustomer {
-    
-    function createClaiming(address claimService, address[] memory users, uint256 amount) public {
-        IClaiming claim = IClaiming(claimService);
+    address claimService;
 
-        claim.createOrderWithAmount(users, amount);
+    function initClaiming(address claim) public{
+        claimService = claim;
+    }
+
+    function createClaiming(address[] memory users) public payable {
+        IClaiming claim = IClaiming(claimService);
+        (bytes32 orderId, uint256 blockNumber) = claim.createOrder();
+        claim.claim(orderId, users, blockNumber);
     }
 }
-
