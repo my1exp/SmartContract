@@ -2,23 +2,18 @@
 
 pragma solidity >=0.8.2 <0.9.0;
 
-interface IClaiming {
-    function createOrder() external returns (bytes32 orderId, uint256 blockNumber);
-
-    function claim(
-        bytes32 OrderId,
-        address[] memory users,
-        uint256 blockNumber
-    ) external payable returns (bool result);
-}
-
-contract Claiming is IClaiming {
+contract Claiming {
     address public owner;
     uint256 public feePrice;
     uint256 public feeAmount;
 
     event OrderCreated(bytes32 indexed orderId, uint256 blockNumber);
-    event ClaimSuccess(uint256 claimValue, uint256 feePrice, uint256 NumberOfUsers, uint256 ValuePerUser);
+    event ClaimSuccess(
+        uint256 claimValue,
+        uint256 feePrice,
+        uint256 NumberOfUsers,
+        uint256 ValuePerUser
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "you are not owner");
@@ -30,9 +25,12 @@ contract Claiming is IClaiming {
         feePrice = _fee;
     }
 
-    function createOrder() external override returns (bytes32 orderId, uint256 blockNumber) {
+    function createOrder()
+        external
+        returns (bytes32 orderId, uint256 blockNumber)
+    {
         orderId = keccak256(abi.encodePacked(msg.sender, block.number));
-        uint256 blockNumber = block.number;
+        blockNumber = block.number;
         emit OrderCreated(orderId, blockNumber);
     }
 
@@ -40,7 +38,7 @@ contract Claiming is IClaiming {
         bytes32 OrderId,
         address[] memory users,
         uint256 blockNumber
-    ) external payable override returns (bool result) {
+    ) external payable returns (bool result) {
         require(
             (keccak256(abi.encodePacked(msg.sender, blockNumber))) == OrderId,
             "Order does not exist"
@@ -66,19 +64,5 @@ contract Claiming is IClaiming {
         (bool sent, ) = payable(msg.sender).call{value: feeAmount}("");
         require(sent, "Failed to send tokens");
         feeAmount = 0;
-    }
-}
-
-contract ClaimingCustomer {
-    address claimService;
-
-    function initClaiming(address claim) public{
-        claimService = claim;
-    }
-
-    function createClaiming(address[] memory users) public payable {
-        IClaiming claim = IClaiming(claimService);
-        (bytes32 orderId, uint256 blockNumber) = claim.createOrder();
-        claim.claim(orderId, users, blockNumber);
     }
 }
